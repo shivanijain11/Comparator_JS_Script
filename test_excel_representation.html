@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vulnerability Comparison</title>
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <script src="https://code.highcharts.com/modules/data.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.3/xlsx.full.min.js"></script>
+    <style>
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        #charts-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .chart-container {
+            width: 400px;
+            height: 300px;
+            margin: 20px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #dddddd;
+            text-align: left;
+            padding: 8px;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <input type="file" id="file1">
+        <input type="file" id="file2">
+        <input type="button" value="Compare" onclick="compareFiles()">
+        <div id="charts-container"></div>
+        <table id="vulnerability-table"></table>
+    </div>
+
+    <script>
+        function readExcelFile(file) {
+            return new Promise((resolve, reject) => {
+                var reader = new FileReader();
+                reader.onload = function (e) {
+                    var data = new Uint8Array(e.target.result);
+                    var workbook = XLSX.read(data, { type: 'array' });
+                    var sheetName = workbook.SheetNames[0];
+                    var sheet = workbook.Sheets[sheetName];
+                    var jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    resolve(jsonData);
+                };
+                reader.onerror = function (e) {
+                    reject(e);
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function compareFiles() {
+            var file1 = document.getElementById('file1').files[0];
+            var file2 = document.getElementById('file2').files[0];
+
+            var data1 = await readExcelFile(file1);
+            var data2 = await readExcelFile(file2);
+
+            var appData = {};
+            
+            data1.slice(1).forEach(row1 => {
+                var appId = row1[2];
+                var appName = row1[3];
+                if (!appData[appId]) {
+                    appData[appId] = {
+                        appName: appName,
+                        totalVulns: 0,
+                        resolvedVulns: 0,
+                        newVulns: 0,
+                        unresolvedVulns: 0
+                    };
+                }
+                appData[appId].totalVulns++;
+            });
+
+            data1.slice(1).forEach(row1 => {
+                var appId = row1[2];
+                var vulnId = row1[0];
+                var foundInBoth = data2.slice(1).find(row2 => row2[0] === vulnId && row2[2] === appId);
+                if (!foundInBoth) {
+                    appData[appId].resolvedVulns++;
+                }
+            });
+
+            data2.slice(1).forEach(row2 => {
+                var appId = row2[2];
+                var vulnId = row2[0];
+                var foundInBoth = data1.slice(1).find(row1 => row1[0] === vulnId && row1[2] === appId);
+                if (!foundInBoth) {
+                    appData[appId].newVulns++;
+                } else {
+                    appData[appId].unresolvedVulns++;
+                }
+            });
+
+            renderChartsAndTable(appData);
+        }
+
+        function renderChartsAndTable(appData) {
+            var chartsContainer = document.getElementById('charts-container');
+            var tableContainer = document.getElementById('vulnerability-table');
+            chartsContainer.innerHTML = ''; // Clear previous charts
+            tableContainer.innerHTML = ''; // Clear previous table
+
+            Object.keys(appData).forEach(appId => {
+                var chartId = 'chart_' + appId;
+                var appName = appData[appId].appName;
+                var totalVulns = appData[appId].totalVulns;
+                var resolvedVulns = appData[appId].resolvedVulns;
+                var newVulns = appData[appId].newVulns;
+                var unresolvedVulns = appData[appId].unresolvedVulns;
+
+                // Create chart container
+                var chartContainer = document.createElement('div');
+                chartContainer.className = 'chart-container';
+                chartContainer.id = chartId;
+                chartsContainer.appendChild(chartContainer);
+
+                // Render pie chart
+                Highcharts.chart(chartId, {
+                    chart: {
+                        type: 'pie'
+                    },
+                    title: {
+                        text: appName
+                    },
+                    series: [{
+                        name: 'Vulnerabilities',
+                        data: [{
+                            name: 'Resolved',
+                            y: resolvedVulns
+                        }, {
+                            name: 'New',
+                            y: newVulns
+                        }, {
+                            name: 'Unresolved',
+                            y: unresolvedVulns
+                        }]
+                    }]
+                });
+            });
+
+            // Render table
+            var table = document.createElement('table');
+            var headerRow = table.insertRow();
+            var headers = ['Application', 'Resolved', 'New', 'Unresolved'];
+            headers.forEach(header => {
+                var th = document.createElement('th');
+                th.textContent = header;
+                headerRow.appendChild(th);
+            });
+            Object.keys(appData).forEach(appId => {
+                var rowData = appData[appId];
+                var dataRow = table.insertRow();
+                [rowData.appName, rowData.resolvedVulns, rowData.newVulns, rowData.unresolvedVulns].forEach(data => {
+                    var td = document.createElement('td');
+                    td.textContent = data;
+                    dataRow.appendChild(td);
+                });
+            });
+            tableContainer.appendChild(table);
+        }
+
+        // Show charts for the clicked application
+        $(document).on('click', 'tr', function () {
+            var appName = $(this).find('td:first').text();
+            $('.chart-container').hide();
+            $('#chart_' + appName.replace(/\s/g, '')).show();
+        });
+
+        // Display percentages or count based on checkbox
+        $('#togglePercentages').change(function () {
+            var isChecked = $(this).is(':checked');
+            var tableCells = document.querySelectorAll('td');
+            tableCells.forEach(cell => {
+                var text = cell.textContent;
+                if (isNaN(text)) {
+                    return;
+                }
+                var count = parseFloat(text);
+                cell.textContent = isChecked ? count.toFixed(2) + '%' : count;
+            });
+        });
+
+        // Default: Show first application pie chart
+        $(document).ready(function () {
+            $('.chart-container').hide();
+            $('.chart-container:first').show();
+        });
+    </script>
+</body>
+</html>
